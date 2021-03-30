@@ -1,0 +1,276 @@
+\title{OpenMPI and parallel Shift-Dictionary calculation}
+\date{\today}
+
+\documentclass[12pt]{article}
+
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+\usepackage{tikz}
+\usepackage{graphicx}
+\graphicspath{ {./images/} }
+
+\makeatletter
+\def\BState{\State\hskip-\ALG@thistlm}
+\makeatother
+
+
+\begin{document}
+\maketitle
+
+\section{Problem}
+Our current algorithms tries to handle the addition of multiple visibilites at once. To achieve this, we group all visibilities together, that have the same shift-index. For every one of these groups we calculate the shift-vector that is representative of all visibilities in this group. This is simply the sum of all shift-vectors in this group.
+Threw modelling we have seen, that in most cases we need N groups, since every shift-index appears at least once, in visibility-clusters of relevant size. We usually store the shift-vectors of all groups in a dictionary. I will call this the shift-dictionary. \\
+
+Using our current implementation of Spift with Apache-Flink, we calculate the shift-dictionary in every parallel Task. The alternative would be to calculate it in the pipeline, before we start using parallel Tasks. But this would lead to high communication-cost, since every node would need to receive a dictionary with $N^2$ complex values. Since the processes may run on different machines, this is not acceptable.
+
+But the current implementation is also not ideal. Calculating the shift-dictionary in every process is redundant and leads to a loss of speed. \\
+
+\resizebox{100mm}{50mm}{
+
+\begin{tikzpicture}[node distance={30mm}, main/.style = {draw, rectangle}, transform shape] 
+\node[main] (1) {StreamSource};
+\node[main] (2) [right of=1]{isRowShift};
+\node[main] (3) [right of=2]{shiftIndex};
+\node[main] (4) [right of=3]{partition};
+\node[main] (7) [above right of=4]{shif-dic};
+\node[main] (8) [right of=7]{set-subGrid2};
+\node[main] (5) [above of=7]{shift-dic};
+\node[main] (6) [right of=5]{set-subGrid1};
+\node[main] (9) [below right of=4]{shif-dic};
+\node[main] (10) [right of=9]{set-subGrid3};
+\node[main] (11) [below of=9]{shift-dic};
+\node[main] (12) [right of=11]{set-subGrid4};
+\node[main] (13) [below right of=8]{output-stream};
+
+\draw (1)--(2);
+\draw (2)--(3);
+\draw (3)--(4);
+\draw (4)--(5); \draw (5)--(6);  \draw (6)--(13);
+\draw (4)--(7); \draw (7)--(8);  \draw (8)--(13);
+\draw (4)--(9); \draw (9)--(10);  \draw (10)--(13);
+\draw (4)--(11); \draw (11)--(12);  \draw (12)--(13);
+
+
+\end{tikzpicture} 
+
+}
+
+\section{Genreall Idea}
+
+We propose to calculate the shift-dictionary only once per machine. Parallel processes on the same machine could use shared memory for fast access. As long as the processes only share information on the same machine, the communication overhead should be acceptable.\\
+
+We could not find a way to do this in Apache-Flink. Flink handles the distribution of processes to machines internally and treats all processes the same, independent of where they are running. So communication of nodes on the same machine is not intended and not supported. So we propose to use openMPI and C (or C++). OpenMPI can handle communication between different machines, but it will also allow shared Memory between processes on the same machine.\\
+
+\section{Implementation}
+
+The first steps of the pipeline stay unchanged. The visibilities get collected, and for each the shift-type and shift-index gets calcualted. We create a list with all shift-indexes and the visibilities they have, and then sort that list, by the amount of visibilities with this shift-index. Then we create partition based on how many physical systems we are using. On the physical systems we partition again, into the processes that will calculate the sub-grids. Different physical systems may host a different amount of processes, so we have to account for that when we partition for the first time.\\
+
+The processes will now calculate the shift-dictionary. To do so, every process will iterate over the list of shift-indexes and visibilities, starting with the shift-index with the highest amount of visibilities:
+\begin{itemize}
+  \item Try to get an exclusive lock, ment for the shift-vector of this shift-index.
+  \item If it was sucessfull, calculate the shift-vector, then downgrade to a shared lock and then move on to the next shift index.
+  \item If it can't get the lock, simply move on to the next shift-index
+\end{itemize}
+
+Every time a process wants to calculate a shift-vector that has already been calculated or is in the process of being calculated, it will be unable to get an exclusive lock and move on to the next one.\\
+
+Once a process has iterated over all shift-indexes, it can start the calculation of the sub-grid, with whatever method was chosen to do this. When it needs the value from the shift-dictionary, it will acquire a shared lock of that shift-index and look it up. Here it can happen that the process needs to wait, in case another process is still calculating this shift-vector. When a process is done calculating a sub-grid, it needs to release all locks it still holds.
+
+
+\resizebox{100mm}{50mm}{
+
+\begin{tikzpicture}[node distance={30mm}, main/.style = {draw, rectangle}, transform shape] 
+\node[main] (1) {StreamSource};
+\node[main] (2) [right of=1]{isRowShift};
+\node[main] (3) [right of=2]{shiftIndex};
+\node[main] (4) [right of=3]{partition};
+
+\node[main] (lp1) [above right of=4]{localPartition1};
+\node[main] (7) [right of=lp1]{shif-dic};
+\node[main] (8) [right of=7]{set-subGrid2};
+\node[main] (5) [above of=7]{shift-dic};
+\node[main] (6) [right of=5]{set-subGrid1};
+\node[main] (lp2) [below right of=4]{localPartition2};
+\node[main] (9) [right of=lp2]{shif-dic};
+\node[main] (10) [right of=9]{set-subGrid3};
+\node[main] (11) [below of=9]{shift-dic};
+\node[main] (12) [right of=11]{set-subGrid4};
+\node[main] (13) [below right of=8]{output-stream};
+
+\node at(15.5,3.5) (sm1) {localMemory};
+\node at(15.5,-3.5) (sm2) {localMemory};
+
+
+\draw (1)--(2);
+\draw (2)--(3);
+\draw (3)--(4);
+\draw (4)--(lp1);
+\draw (lp1)--(5); \draw (5)-- (6);  \draw (6)--(13);
+\draw (lp1)--(7); \draw (7)--(8);  \draw (8)--(13);
+
+\draw (4)--(lp2);
+\draw (lp2)--(9); \draw (9)--(10);  \draw (10)--(13);
+\draw (lp2)--(11); \draw (11)--(12);  \draw (12)--(13);
+
+\draw (5)--(sm1)[dashed]; \draw (6)--(sm1)[dashed];
+\draw (7)--(sm1)[dashed]; \draw (8)--(sm1)[dashed];
+\draw (9)--(sm2)[dashed]; \draw (10)--(sm2)[dashed];
+\draw (11)--(sm2)[dashed]; \draw (12)--(sm2)[dashed];
+
+
+\end{tikzpicture} 
+
+}
+
+\section{ cost/gain }
+
+Let B be the amount of visibilites in one batch. The cost of the current approach depends on how many different visibilities exist in a batch. Since our analysis has shown that in almost all real cases all 2N possible shift-indexes exist, I will assume that this is the case.\\
+
+The current approach requires $B\times N$ complex multiplications and $(B-2N)\times N$ complex additions.\\
+
+The new approach is harder to calculate. If we would want to have an optimal result, we would want to distribute the calculations of the shift-vectors over all the processes in such a way, that the sum of all visibilities a process has to consider for all its shift-vectors, is the same for every process. This problem is equivalent to multiway-number-partitioning, and therefore is NP-hard. So instead of taking an optimal solution, we take a greedy approach, which generally performs good.\\
+
+Worst-case: In the worst case, all visibilities have the same shift-index. Since we before stated, that each shift-index has at least one visibility, I will still assume that. In that case, one process has to calculate one vector with $(B-2N+1)$ visibilities, while all other processes wait for it. This would take $(B-2N)\times N$ complex multiplications, and $(B-2N)\times N$ complex additions. \\
+
+Best-case: In the best case, every visibilites has the same amount of other visibilities with the same shift-index. In that case, every process would have to calculate an equal part of the shift-dictionary. This means, if $lp$ is the degree of local parallelism, every process has $\frac{B \times N}{lp}$ complex multiplications, and $\frac{(B-2N)\times N}{lp}$ complex additions.\\
+
+As we can see, even in the worst case, the new approach is faster than the old one. I am not mathematically capable to calculate the average amount of required complex multiplications and additions. So I simulated it, and show the result on the graph bellow. This is also a very common problem in CPU allocation, and I plan to look further into existing literature into the topic.
+
+\includegraphics{addition}
+
+\includegraphics{multiplications}
+
+\section{ Terminology }
+
+$lp_i$ = amount of local partitionings on machine i \\
+$gp$ = amount of global partitioning \\
+$mp$ = amount of physical machines\\
+
+\section{ Doublestep }
+
+The naive approach of calculating the final matrix is to add all the shifted values for ervery entry of the matrix. This leads to a lot of additions getting done multiple times. We developed the double-step algorithm to insure every addition only happens once.
+
+\subsection{ Simple doublestep }
+
+Consider two shift-vectors $\vec{v}_1$ and $\vec{v}_2$ with shift-index $s_1$ and $s_2$ where $s_1 = s_2+\frac{N}{2}$ which are both row-shiftable. In the first row, $\vec{v}_1$ and $\vec{v}_2$ get added together $\vec{v}_1[0]+\vec{v}_2[0]$ ([*] denotes by how much the vector is shifted). On the next row, we get $\vec{v}_1[s_1]+\vec{v}_2[s_2]$. On the third row, it's $\vec{v}_1[2*s_1]+\vec{v}_2[2*s_2] = \vec{v}_1[2*s_1]+\vec{v}_2[2*s_1+2*\frac{N}{2}] = \vec{v}_1[2*s_1]+\vec{v}_2[2*s_1] = (\vec{v}_1[0]+\vec{v}_2[0])[2*s_1] $. And on the forth $\vec{v}_1[4*s_1]+\vec{v}_2[4*s_2] = (\vec{v}_1[s_1]+\vec{v}_2[s_1 +\frac{N}{2}])[2*s_1]$.\\
+
+As we can see, we only need to make two vector-additions, $\vec{v}_1[0]+\vec{v}_2[0]$ and $\vec{v}_1[s_1]+\vec{v}_2[s_2]$. These two rowse form a $2\times N$-matrix. If we shift this matrix by a multiple of $2*s_1$, it corresponds to the shifted addition of $v_1$ and $v_2$. We will call this matrix $sm_{2*s_1}^2$, where the subscript denotes the shift-index of the shift-matrix, and the superscript denotes the amount of rows it has. We can do this with all shift-vecor-pairs to get $\frac{N}{2}$ shift-matrices, that all have an even shift-index.\\
+
+Using all the $2\times N$-shift-matrices, we can use the same methode to construct $\frac{N}{4}$ $4\times N$-matrices with shift-vectors that are multiple of four. We repeat this process until we have calculated $sm_{0}^N$, which is the final matrix.
+
+\subsection{ Doublestep with parallelism }
+
+As with the naive approach, using a parallel approach means slicing the image matrix into sub-matrices. Different then the naive approach though, all processes on the same machine handle one large slice, rather then one smaller slice per process on the machine. When setting up the pipeline, it still has to be decided if the image-matrix gets horizontally or vertically. Here I will assume it gets sliced horizontally, but the same system will also work with vertical slices.\\
+
+Calculating the new image matrix slice when a new batch gets processed is split in two halfs. First all shift-vectors with horizontal shift get added, then all shift-vectors with vertical shift. This order is arbitrary. Doublestep works differently, depending if the shift is parrallel to the slicing or perpendicular to it. The different algorithms get discussed in the next two sections.
+
+\subsubsection{ Parrallel }
+
+In this case, we consider row-shift and horizontal slicing. Let $D_i=\frac{N*lp_i}{gp}$ the size of the image-sub-grid that the machine i has to calculate and $l_{i,0}=\sum_{j=0}^{i-1}lp_i+1$ be the first line that this machine has to calculate (we start counting from 0). In this case we use doubleshift to caculate the first $\log{D_i}$ steps of doubleshift to get $\log{(N-D_i)}$ matrices of size $D_i \times N$.\\
+
+We need all shift-vectors for this, so we have to calculat ethem beforehand. Since it is easiert to calculate the shift-matrices if we assume we are handling the first row of the matrix, we will also shift all values $l_ {i,0}$ times, to emulate this. The calculation of the shift-vectors is evenly distributed among all local processes. Every process writes the result its shift-vectors to a block of memory of size  $\frac{N^2}{lp_i}$, that only it can write on, but others can read as well.\\
+
+The following pseudo-code shows how process $k\in \{0,1,2,...(lp_i-1)\}$ calculates the shift-vectors
+\begin{algorithm}
+\caption{Calculating shift-vectors for parallel double-step}\label{euclid}
+\begin{algorithmic}[1]
+\State $r = N/lp_i$
+\State $range = [k*r,(k+1)*r]$
+\For{ vis in visibilities, vis.isRS and $vis.shiftIndex \in range$}
+      \State q = emptyVector
+      \For{ i $\leftarrow$ 0 to N  }
+            \State $q[k]=vis*W^{(k*vis.v-l_{i,0}*vis.shiftIndex)\%N}$
+      \EndFor
+      \State memory.setShiftVector(vis.shiftIndex,q)
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+The local processes now calculate the shift-matrices for each step together. We allocate a second blocks of memory of size $\frac{N^2}{lp_i}$ to each process. The first block is to store the result from the previous step (reading block), and the other block to calculate the next step (writing block). All processes have reading-rights to all memory blocks, but only writing rights to their own. Since every step only needs the shift-matrices of the previous one, after every step the previous reading block can become the new writing block.\\
+
+Initially, there will be enough shift-matrices so that every process can calculate one or multiple full shift-matrices. Later, processes will calculate shift-matrices together, so the value of the shift-matrices will be distributed over multiple memory-blocks. I will first show how the processes calculate the shift-matrices when they can calculate them alone.\\
+
+The following pseudo-code shows how process $k\in \{0,1,2,...(lp_i-1)\}$ calculates the shift matrices in the j-th step of doublestep ($1 \leq j\leq \log D_i,j\leq \log \frac{N}{lp_i}$:
+\begin{algorithm}
+\caption{Partial parallel DoubleStep Algorithm for process k for small j}\label{euclid}
+\begin{algorithmic}[1]
+\State $r = N/(2^j*lp_i)$
+\State $range = [k*r,(k+1)*r]$
+\State $shiftIndexes = range*2^j$
+\For{ shiftIndex in shiftIndexes }
+      \State $m_1 = memory.getPreviousMatrix( \frac{shiftIndex}{2} )$
+      \State $m_2 = memory.getPreviousMatrix( \frac{shiftIndex}{2}+\frac{N}{2} )$
+      \State $firstHalf = m_1.shift(0) + m_2.shifted(0)$
+      \State $secondHalf = m_1.shifted(\frac{shiftIndex}{2}) + m_2.shifted(\frac{shiftIndex}{2}+\frac{N}{2})$
+      \State $memory.setNextMatrix( shiftIndex, concatenate(firstHalf,secondHalf)$
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+When there are more processes then shift-matrixes to calculate, multiple processes can start to calculate the same matrix. This can be done, because the calculation of every row in a shift-matrix is independent from all other rows. Processes still store the partial-shift-matrix in there own memory-block, to avoid problems with parallel access.
+
+\begin{algorithm}
+\caption{Partial parallel DoubleStep Algorithm for process k for small j}\label{euclid}
+\begin{algorithmic}[1]
+\State $r = \frac{N}{2^j*lp_i}$
+\State $number = int(k*r)$
+\State $lines = [(k*r-number)*2^j,((k+1)*r-number)*2^j]$
+\State $shiftIndex =number*2^j$
+\For{ line in lines }
+      \If {$line < \frac{2^j}{2}$}
+          \State $l_1 = memory.getLineOfPreviousMatrix( \frac{shiftIndex}{2}, line )$
+          \State $l_2 = memory.getLineOfPreviousMatrix( \frac{shiftIndex}{2}+\frac{N}{2},line )$
+          \State $memory.setLineOfNextMatrix(shiftIndex, line, l_1+l_2)$
+      \Else
+          \State $l_1 = memory.getLineOfPreviousMatrix( \frac{shiftIndex}{2}, ((line-\frac{N}{2})-(\frac{shiftIndex}{2}))\%N )$
+          \State $l_2 = memory.getLineOfPreviousMatrix( \frac{shiftIndex}{2}+\frac{N}{2},((line-\frac{N}{2})-(\frac{shiftIndex}{2}+\frac{N}{2}))\%N)$
+          \State $memory.setLineOfNextMatrix(shiftIndex, line, l_1+l_2)$      
+      \EndIf
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+In the end, all shift-matrices of size $D_i \times N$ need to be added to the previous image-sub-Grid to. Every process can handle it's own sub-Grid, and acess the $D_i \times N$ matrices, since every process has read-access. Let $NrLines$ be the number of lines each process has to handle. 
+
+\begin{algorithm}
+\caption{Partial parallel DoubleStep Algorithm for process k, calculating final}\label{euclid}
+\begin{algorithmic}[1]
+\State $lines = [0 ,NrLines]$
+\For{ line in lines }
+      \State $rowToAdd = memory.getLineOfPreviousMatrix(0, k*NrLines+line)$
+      \For{$ i \leftarrow 1$ to $\frac{N}{D_i} $ }
+             \State $rowToAdd \mathrel{+}= memory.getLineOfPreviousMatrix(i*2^j, k*NrLines+line)$
+      \EndFor
+      \State $memory.setLineOfSubGrid(line, rowToAdd + memory.getLineOfSubGrid(line) )$
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{ Perpendicular }
+In this case we consider column-shift and horizontal slicing.  Let $D_i=\frac{N*lp_i}{gp}$ the size of the image-sub-grid that the machine i has to calculate and $l_{i,0}=\sum_{j=0}^{i-1}lp_i+1$ be the first line that this machine has to calculate (we start counting from 0).\\
+
+Before starting with doublestep, we again need to calculate all shift-vectors. The calculation of the shift-vectors is again evenly distributed among all local processes. Every process writes the result its shift-vectors to a block of memory of size  $\frac{N^2}{lp_i}$, that only it can write on, but others can read as well. We will not need the full shift-vector for all shift-indexes, since some values won't appear in the sub-grids of the image matrix we are calculating.\\
+
+\begin{algorithm}
+\caption{Calculating shift-vectors for parallel double-step}\label{euclid}
+\begin{algorithmic}[1]
+\State $r = N/lp_i$
+\State $range = [k*r,(k+1)*r]$
+\For{ vis in visibilities, vis.isCS and $vis.shiftIndex \in range$}
+      \State q = emptyVector
+      \State $lines = [l_{i,0}, l_{i,0}+D_i]$
+      \For{$ i \leftarrow 1$ to $\frac{N}{GCD(shiftIndex,N)} $ }
+             \State $lines = lines+\frac{N}{2^i}$
+      \EndFor
+      \For{ i in lines  }
+            \State $q[k]=vis*W^{(k*vis.u)\%N}$
+      \EndFor
+      \State memory.setShiftVector(vis.shiftIndex,q)
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+Like in the parallel-case, the processes will now calculate the steps of doublestep together. What differes from the parallel case, is that all steps of doublestep will get calculated, and that not all lines will be considered, since not all lines matter for the final image-sub-grid. Before we start calculating the steps of doublestep, we calculate what lines are needed in each shift-matrix. To do this, we first consider the final $D_i \times N$-Matrix. It will need all the lines in the range $[l_{i,0},l_{i,0}+D_i]$. To calculate it, we need the lines $[l_{i,0},l_{i,0}+D_i]$ of the shift-matrix with shift-index 0 and size $DN \times \frac{D_i}{2}$.
+
+\end{document}
