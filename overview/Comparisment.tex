@@ -150,7 +150,7 @@ Using all the $2\times N$-shift-matrices, we can use the same method to construc
 
 \subsection{ Parallel-computed Doublestep }
 
-In our case, multiple processes work together to calculate a sub-grid of the image matrix. Since how the image-matrix is scliced is fixed, we get two different cases. In one case, the sclicing is parallel to the shift-type (e.g. row shift and row sclice). In this case only a few steps of doublestep need to be calculated. Figure \ref{fig:DSparallel} shows how to do this, if only the red part needs to be calculated. \\
+In our case, multiple processes work together to calculate a sub-grid of the image matrix. Since how the image-matrix is sliced is fixed, we get two different cases. In one case, the slicing is parallel to the shift-type (e.g. row shift and row slice). In this case only a few steps of Doublestep need to be calculated. Figure \ref{fig:DSparallel} shows how to do this, if only the red part needs to be calculated. \\
 
 
 \begin{figure}
@@ -159,7 +159,7 @@ In our case, multiple processes work together to calculate a sub-grid of the ima
 \label{fig:DSparallel}
 \end{figure}
 
-When the slicing is parallel to the shift (e.g. column shift and row slice), all steps of doublestep need to be calculated. But since only a sub grid of the image matrix is needed, only certain lines need to be calculated. This is shown in Figure \ref{fig:DSperpendicular}. The red shows the values that need to be calculated.
+When the slicing is parallel to the shift (e.g. column shift and row slice), all steps of Doublestep need to be calculated. But since only a sub grid of the image matrix is needed, only certain lines need to be calculated. This is shown in Figure \ref{fig:DSperpendicular}. The red shows the values that need to be calculated.
 
 
 \begin{figure}
@@ -168,9 +168,9 @@ When the slicing is parallel to the shift (e.g. column shift and row slice), all
 \label{fig:DSperpendicular}
 \end{figure}
 
-\section{ Comparisment }
+\section{ Comparisons }
 
-Table \ref{table:comp} compares the naive approach with doublestep using OpenMPI. $lp_i$ denotes the amount of local processes on machine $i$, and $D_i=\frac{N*lp_i}{gp}$ the amount of lines that the sub-grid calculated by machine $i$ has. In all cases where $lp_i>1$, the system we propose would require less memory, and in all cases it would be faster than the current approach.
+Table \ref{table:comp} compares the naive approach with Doublestep using OpenMPI. $lp_i$ denotes the amount of local processes on machine $i$, and $D_i=\frac{N*lp_i}{gp}$ the amount of lines that the sub-grid calculated by machine $i$ has. In all cases where $lp_i>1$, the system we propose would require less memory, and in all cases it would be faster than the current approach.
 
 \begin{table}
 \label{table:comp}
@@ -181,7 +181,7 @@ Table \ref{table:comp} compares the naive approach with doublestep using OpenMPI
  Double Step and OpenMPI &  $2*\frac{N^2}{lp_i}$ & $\mathcal{O}(\frac{N^2*log(D_i)}{lp_i}) )$\\ 
  \hline
 \end{tabular}
-\caption{compare efficiencies}
+\caption{compare deficiencies}
 \end{table}
 
 \end{document}
