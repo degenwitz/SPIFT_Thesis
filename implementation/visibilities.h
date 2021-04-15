@@ -1,3 +1,6 @@
+#ifndef VISIBILITY_H
+#define VISIBILITY_H
+
 #include<complex>
 #include<algorithm>
 
@@ -10,6 +13,8 @@ public:
     int shift_index;
 
     visibility(std::complex<double> vis,int u,int v): u(u), v(v), vis(vis) { }
+
+    visibility(std::complex<double> vis,int u,int v, bool isCS, int shift_index): u(u), v(v), vis(vis), isCS(isCS), shift_index(shift_index) { }
 
     void calc_isCS(){
         isCS = (v == 0) || (u%2==1 && v%2 == 0) || (v%2 == 0 && std::__gcd(u,N) < std::__gcd(v,N) );
@@ -28,3 +33,4 @@ public:
         }
     }
 };
+#endif // VISIBILITY_H
