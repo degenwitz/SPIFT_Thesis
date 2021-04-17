@@ -20,10 +20,10 @@ struct line{
 };
 
 template <int N, int lp, int D>
-void __createShiftVectors(complex<double> mem, vector<vector<visibility<N>>> perpendicularVisibilities, vector<complex<double>> W, vector<line> required_lines);
+complex<double>** __createShiftVectors(complex<double> mem, vector<vector<visibility<N>>> perpendicularVisibilities, vector<complex<double>> W, vector<line> required_lines);
 
 template <int N, int lp, int D>
-void __calculateDoubleStep(complex<double> **mem1, complex<double> **mem2, vector<line> required_lines);
+complex<double>** __calculateDoubleStep(complex<double> **mem1, complex<double> **mem2, vector<line> required_lines);
 
 template<int N, int lp, int D>
 void __calcFinalImageMatrix(complex<double> **mem1, complex<double> **mem2, complex<double> **imageMatrix, int machine_index);
@@ -52,6 +52,9 @@ void calc_required_lines(vector<line> &lines,int shiftIndex, int D_i, vector<vec
 
 template<int N, int lp, int D>
 void perpendicularDoubleStep( vector<vector<visibility<N>>> perpendicularVisibilities, vector<complex<double>> W, complex<double> **imageMatrix, int machine_index ){
+
+    cout << " starting perpendicular " << endl;
+
     complex<double> **mem1 = new complex<double>*[N];
     complex<double> **mem2 = new complex<double>*[N];
     for( int i = 0; i < N; ++i){
@@ -59,7 +62,6 @@ void perpendicularDoubleStep( vector<vector<visibility<N>>> perpendicularVisibil
         mem2[i] = new complex<double>[N];
     }
 
-    cout << "setup memory" << endl;
 
     //calculating required lines for each shift-matrix
     vector<vector<line>> required_lines(log2(N)+1);
@@ -70,19 +72,29 @@ void perpendicularDoubleStep( vector<vector<visibility<N>>> perpendicularVisibil
     calc_required_lines<N>(lines, 0, N, required_lines);
 
     //calculating shift-vectors
-    __createShiftVectors<N, lp, D>(mem2, perpendicularVisibilities,W,required_lines[0]);
+    complex<double>** mem_new = __createShiftVectors<N, lp, D>(mem2, perpendicularVisibilities,W,required_lines[0]);
 
+    if(mem2 == mem_new){
+        mem2 = mem1;
+        mem1 = mem_new;
+    }
 
     //doublestep
-    __calculateDoubleStep<N, lp, D>(mem1, mem2, required_lines);
+    mem_new = __calculateDoubleStep<N, lp, D>(mem1, mem2, required_lines);
+
+    if(mem2 == mem_new){
+        mem2 = mem1;
+        mem1 = mem_new;
+    }
 
     //update image-matrix
     __calcFinalImageMatrix<N, lp, D>(mem1, mem2, imageMatrix, machine_index);
 
+    cout << " done with perpendicular " << endl;
 }
 
 template <int N, int lp, int D>
-void __createShiftVectors(complex<double>** mem, vector<vector<visibility<N>>> perpendicularVisibilities, vector<complex<double>> W, vector<line> required_lines){
+complex<double>** __createShiftVectors(complex<double>** mem, vector<vector<visibility<N>>> perpendicularVisibilities, vector<complex<double>> W, vector<line> required_lines){
     int allLines = required_lines.size();
     int r = allLines/lp;
     #pragma omp parallel for
@@ -104,29 +116,50 @@ void __createShiftVectors(complex<double>** mem, vector<vector<visibility<N>>> p
             }
         }
     }
+    return mem;
 }
 
 
 template <int N, int lp, int D>
-void __calculateDoubleStep(complex<double> **mem1, complex<double> **mem2, vector<vector<line>> required_lines){
+complex<double>** __calculateDoubleStep(complex<double> **mem1, complex<double> **mem2, vector<vector<line>> required_lines){
 
     for( int j = 1; j < log(N)+1; ++j){
-        int allLines = required_lines[j].size();
-        int r = allLines/lp;
+        int allLines = required_lines[j].size();//<---------------------------------------------------------geht nicht wenn lp zu gross ist
         int D_i = int(pow(2,j));
 
-        #pragma omp parallel for
-        for( int k = 0; k < lp; ++k){
-            for(int i = k*r; i < (k+1)*r && i < allLines; ++i){
-                line l = required_lines[0][i];
+        if(allLines >= lp){
+            int r = allLines/lp;
+            #pragma omp parallel for
+            for( int k = 0; k < lp; ++k){
+                for(int i = k*r; i < (k+1)*r && i < allLines; ++i){
+                    line l = required_lines[j][i];
+                    int shift_index = l.shiftIndex;
+                    int row = l.ln;
+                    for(int column = 0; column < D_i/2; ++column){
+                        mem2[row][shift_index+column] = mem1[row][shift_index/2+column] + mem1[row][(shift_index+N)/2+column];
+                    }
+                    for(int column = D_i/2; column < D_i; ++column){
+                        int col = column-D_i/2;
+                        mem2[row][shift_index+column] = mem1[(row+shift_index/2)%N][shift_index/2+col] + mem1[((shift_index+N)/2+row)%N][((shift_index+N)/2+col)%N];
+                    }
+
+                }
+            }
+        } else {
+            double r = allLines*1./lp;
+            #pragma omp parallel for
+            for( int k = 0; k < lp; ++k){
+                line l = required_lines[j][int(r*k)];
+                int firstCol = (r*k-int(r*k)) * D_i + 0.5;
+                int lastCol = (r*(k+1)-int(r*k)) * D_i + 0.5;
                 int shift_index = l.shiftIndex;
                 int row = l.ln;
-                for(int column = 0; column < D_i/2; ++column){
-                    mem1[row][shift_index+column] = mem2[row][shift_index/2+column] + mem2[row][(shift_index+N)/2+column];
+                for(int column = firstCol; column < D_i/2 && column < lastCol; ++column){
+                    mem2[row][shift_index+column] = mem1[row][shift_index/2+column] + mem1[row][(shift_index+N)/2+column];
                 }
-                for(int column = D_i/2; column < D_i; ++column){
+                for(int column = (D_i/2<firstCol)?firstCol:D_i/2; column < D_i && column < lastCol; ++column){
                     int col = column-D_i/2;
-                    mem1[row][shift_index+column] = mem2[(row+shift_index/2)%N][shift_index/2+col] + mem2[((shift_index+N)/2+row)%N][((shift_index+N)/2+col)%N];
+                    mem2[row][shift_index+column] = mem1[(row+shift_index/2)%N][shift_index/2+col] + mem1[((shift_index+N)/2+row)%N][((shift_index+N)/2+col)%N];
                 }
 
             }
@@ -135,6 +168,8 @@ void __calculateDoubleStep(complex<double> **mem1, complex<double> **mem2, vecto
         mem1 = mem2;
         mem2 = prov;
     }
+
+    return mem1;
 }
 
 template<int N, int lp, int D>
@@ -144,7 +179,7 @@ void __calcFinalImageMatrix(complex<double> **mem1, complex<double> **mem2, comp
     for( int k = 0; k < lp; ++k){
         for( int column = r*k; column < r*(k+1); ++column){
             for(int row = 0; row < D; ++row){
-                imageMatrix[row][column] += mem2[D*machine_index+row][column];
+                imageMatrix[row][column] += mem1[D*machine_index+row][column];
             }
         }
     }

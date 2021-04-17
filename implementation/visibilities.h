@@ -3,6 +3,8 @@
 
 #include<complex>
 #include<algorithm>
+#include<iostream>
+#include<complex>
 
 template<int N>
 struct visibility{
@@ -33,4 +35,14 @@ public:
         }
     }
 };
+
+void printMem(int D, int N, std::complex<double> **mem){
+    for( int i = 0; i < D; ++i){
+        std::cout << "[";
+        for(int j = 0; j < N; ++j){
+            std::cout << mem[i][j] << ", ";
+        }
+        std::cout << "]" << std::endl;
+    }
+}
 #endif // VISIBILITY_H

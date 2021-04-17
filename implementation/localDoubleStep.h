@@ -13,6 +13,8 @@ void __localDoubleStep(int rank, complex<double> **imageMatrix, vector<complex<d
 template<int N>
 void local_double_step(int rank){
 
+    std::cout << "local process " << endl;
+
     const int D = mn::N/mn::size;
     //create image matrix
     complex<double> **imageMatrix = new complex<double>*[D];
@@ -34,6 +36,14 @@ void local_double_step(int rank){
     while(true){
         __localDoubleStep<mn::N, mn::lp, D>(rank, imageMatrix,W);
         //TODO take out
+        std::cout << "image matrix in rank: " << rank << endl;
+        for( int i = 0; i < D; ++i){
+            std::cout << "[";
+            for( int j = 0; j < N; ++j){
+                std::cout << imageMatrix[i][j] << ", ";
+            }
+            std::cout << "]" << endl;
+        }
         return;
     }
 }
@@ -48,8 +58,8 @@ void __localDoubleStep(int rank, complex<double> **imageMatrix, vector<complex<d
     vector<vector<visibility<N>>> perpendicularVisibilities(N);
 
     for( int i = 0; i < N; i += 6){
-        double vis_r = *(double*)&buf[i+mn::VIS_ENCODING::vis_r];
-        double vis_i = *(double*)&buf[i+mn::VIS_ENCODING::vis_i];
+        double vis_r = *(float*)&buf[i+mn::VIS_ENCODING::vis_r];
+        double vis_i = *(float*)&buf[i+mn::VIS_ENCODING::vis_i];
         int u = buf[i+mn::VIS_ENCODING::u];
         int v = buf[i+mn::VIS_ENCODING::v];
         int shift_index = buf[i+mn::VIS_ENCODING::shift_index];
@@ -60,6 +70,18 @@ void __localDoubleStep(int rank, complex<double> **imageMatrix, vector<complex<d
         } else {
             parallelVisibilities[shift_index].push_back(vis);
         }
+    }
+
+    //print out visibilities
+    for( int j = 0; j < N; ++j){
+    for(int i = 0; i < perpendicularVisibilities[j].size(); ++i){
+        visibility<N> v = perpendicularVisibilities[j][i];
+        std::cout << "per [" << v.vis << ", " << v.u <<  ", "<< v.v << "]";
+    }
+    for(int i = 0; i < parallelVisibilities[j].size(); ++i){
+        visibility<N> v = parallelVisibilities[j][i];
+        std::cout << "par [" << v.vis << ", " << v.u <<  ", "<< v.v << "]" << "shift-index: " << v.shift_index << endl;
+    }
     }
 
     //perform SPIFT

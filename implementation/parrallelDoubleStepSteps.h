@@ -13,10 +13,10 @@ using namespace std;
 namespace pard{
 
 template<int N, int lp, int D>
-void __createShiftVectors(complex<double> **mem1, vector<vector<visibility<N>>> parallelVisibilities, vector<complex<double>> W);
+complex<double>** __createShiftVectors(complex<double> **mem1, vector<vector<visibility<N>>> parallelVisibilities, vector<complex<double>> W);
 
 template<int N, int lp, int D>
-void __cacDoubleStepPara(complex<double> **mem1, complex<double> **mem2);
+complex<double>** __cacDoubleStepPara(complex<double> **mem1, complex<double> **mem2);
 
 template<int N, int lp, int D>
 void __calcFinalImageMatrix(complex<double> **mem1, complex<double> **mem2, complex<double> **imageMatrix, int machine_index);
@@ -33,13 +33,20 @@ void parallelDoubleStep( vector<vector<visibility<N>>> parallelVisibilities, vec
             mem2[i] = new complex<double>[N];
     }
 
-    __createShiftVectors<N,lp,D>(mem1,parallelVisibilities,W);
+    complex<double>** mem_new = __createShiftVectors<N,lp,D>(mem1,parallelVisibilities,W);
 
-    cout << " created shift-vectors " << endl;
+    if(mem2 == mem_new){
+        mem2 = mem1;
+        mem1 = mem_new;
+    }
 
-    __cacDoubleStepPara<N,lp,D>(mem1, mem2);
 
-    cout << " performed steps of doublestep " << endl;
+    mem_new = __cacDoubleStepPara<N,lp,D>(mem1, mem2);
+
+    if(mem2 == mem_new){
+        mem2 = mem1;
+        mem1 = mem_new;
+    }
 
     __calcFinalImageMatrix<N,lp,D>(mem1,mem2,imageMatrix,machine_index);
 
@@ -49,7 +56,7 @@ void parallelDoubleStep( vector<vector<visibility<N>>> parallelVisibilities, vec
 
 
 template<int N, int lp, int D>
-void __createShiftVectors(complex<double> **mem1,vector<vector<visibility<N>>> parallelVisibilities, vector<complex<double>> W){
+complex<double>**__createShiftVectors(complex<double> **mem1,vector<vector<visibility<N>>> parallelVisibilities, vector<complex<double>> W){
     int r = N/lp;
 
     //calculating shift-vectors and storing it in memory 1
@@ -78,10 +85,12 @@ void __createShiftVectors(complex<double> **mem1,vector<vector<visibility<N>>> p
         }
     }
 
+    return mem1;
+
 }
 
 template<int N, int lp, int D>
-void __cacDoubleStepPara(complex<double> **mem1, complex<double> **mem2){
+complex<double>** __cacDoubleStepPara(complex<double> **mem1, complex<double> **mem2){
     //calculating doublestep
     //for small j
     for( int j = 1; j <= log2(D) && j <= log2(N/lp); ++j){
@@ -114,9 +123,9 @@ void __cacDoubleStepPara(complex<double> **mem1, complex<double> **mem2){
         int D_j = pow(2,j);
         #pragma omp parallel for
         for( int k = 0; k < lp; ++k){
-            double r = k*N/(lp*D_j);
-            int shiftIndex = r;
-            for(int row = D_j*(r-shiftIndex); row < D_j*((k+1)*N/(lp*D_j)-shiftIndex);++row){
+            double r = 1.*k*N/(lp*D_j);
+            int shiftIndex = int(r) * D_j;
+            for(int row = D_j*(r-int(r)); row < D_j*(1.*(k+1)*N/(lp*D_j)-int(r));++row){
                 if(row < D_j/2){
                     for(int column = 0; column < N; ++column){
                         mem2[shiftIndex+row][column] = mem1[shiftIndex/2+row][column] + mem1[shiftIndex/2+N/2+row][column];
@@ -133,6 +142,7 @@ void __cacDoubleStepPara(complex<double> **mem1, complex<double> **mem2){
         mem1 = mem2;
         mem2 = prov;
     }
+    return mem1;
 
 }
 
