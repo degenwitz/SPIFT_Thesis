@@ -4,6 +4,7 @@
 #include <time.h>
 #include <stdio.h>
 #include <mpi.h>
+#include<iostream>
 
 template<int N>
 std::vector<visibility<N>> get_random_datapoints(){
@@ -32,7 +33,7 @@ std::vector<visibility<N>> get_first_row_ones(){
 }
 
 template<int N>
-void double_step_coordinator(){
+void spift_coordinator(){
 
     srand( (unsigned)time(NULL) );
 

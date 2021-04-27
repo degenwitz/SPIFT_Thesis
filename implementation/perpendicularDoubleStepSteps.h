@@ -20,7 +20,7 @@ struct line{
 };
 
 template <int N, int lp, int D>
-complex<double>** __createShiftVectors(complex<double> mem, vector<vector<visibility<N>>> perpendicularVisibilities, vector<complex<double>> W, vector<line> required_lines);
+complex<double>** __createShiftVectors(complex<double> mem, vector<vector<visibility<N>>> &perpendicularVisibilities, vector<complex<double>> &W, vector<line> required_lines);
 
 template <int N, int lp, int D>
 complex<double>** __calculateDoubleStep(complex<double> **mem1, complex<double> **mem2, vector<line> required_lines);
@@ -51,7 +51,7 @@ void calc_required_lines(vector<line> &lines,int shiftIndex, int D_i, vector<vec
 }
 
 template<int N, int lp, int D>
-void perpendicularDoubleStep( vector<vector<visibility<N>>> perpendicularVisibilities, vector<complex<double>> W, complex<double> **imageMatrix, int machine_index ){
+void perpendicularDoubleStep( vector<vector<visibility<N>>> &perpendicularVisibilities, vector<complex<double>> &W, complex<double> **imageMatrix, int machine_index ){
 
     cout << " starting perpendicular " << endl;
 
@@ -91,10 +91,18 @@ void perpendicularDoubleStep( vector<vector<visibility<N>>> perpendicularVisibil
     __calcFinalImageMatrix<N, lp, D>(mem1, mem2, imageMatrix, machine_index);
 
     cout << " done with perpendicular " << endl;
+
+    //deleting memory
+    for(int i = 0; i < N; ++i){
+        delete mem1[i];
+        delete mem2[i];
+    }
+    delete mem1;
+    delete mem2;
 }
 
 template <int N, int lp, int D>
-complex<double>** __createShiftVectors(complex<double>** mem, vector<vector<visibility<N>>> perpendicularVisibilities, vector<complex<double>> W, vector<line> required_lines){
+complex<double>** __createShiftVectors(complex<double>** mem, vector<vector<visibility<N>>> &perpendicularVisibilities, vector<complex<double>> &W, vector<line> required_lines){
     int allLines = required_lines.size();
     int r = allLines/lp;
     #pragma omp parallel for

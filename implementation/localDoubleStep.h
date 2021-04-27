@@ -8,7 +8,7 @@
 #include "perpendicularDoubleStepSteps.h"
 
 template<int N, int lp, int D>
-void __localDoubleStep(int rank, complex<double> **imageMatrix, vector<complex<double>> W);
+void __localDoubleStep(int rank, complex<double> **imageMatrix, vector<complex<double>> &W);
 
 template<int N>
 void local_double_step(int rank){
@@ -35,21 +35,16 @@ void local_double_step(int rank){
 
     while(true){
         __localDoubleStep<mn::N, mn::lp, D>(rank, imageMatrix,W);
-        //TODO take out
-        std::cout << "image matrix in rank: " << rank << endl;
-        for( int i = 0; i < D; ++i){
-            std::cout << "[";
-            for( int j = 0; j < N; ++j){
-                std::cout << imageMatrix[i][j] << ", ";
-            }
-            std::cout << "]" << endl;
-        }
-        return;
     }
+
+    for(int i = 0; i < D; ++i){
+        delete imageMatrix[i];
+    }
+    delete imageMatrix;
 }
 
 template<int N, int lp, int D>
-void __localDoubleStep(int rank, complex<double> **imageMatrix, vector<complex<double>> W){
+void __localDoubleStep(int rank, complex<double> **imageMatrix, vector<complex<double>> &W){
 
     int buf[ mn::visibilities_per_message*6 ]; //note here v, u, vis_i, vis_r, isCS, shift_index
     int res = MPI_Recv( &buf, mn::visibilities_per_message*6, MPI_INT, mn::MPI_host, mn::performDoubleStep, MPI_COMM_WORLD, MPI_STATUS_IGNORE);

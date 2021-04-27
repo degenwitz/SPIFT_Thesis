@@ -13,7 +13,7 @@ using namespace std;
 namespace pard{
 
 template<int N, int lp, int D>
-complex<double>** __createShiftVectors(complex<double> **mem1, vector<vector<visibility<N>>> parallelVisibilities, vector<complex<double>> W);
+complex<double>** __createShiftVectors(complex<double> **mem1, vector<vector<visibility<N>>> &parallelVisibilities, vector<complex<double>> &W);
 
 template<int N, int lp, int D>
 complex<double>** __cacDoubleStepPara(complex<double> **mem1, complex<double> **mem2);
@@ -22,7 +22,7 @@ template<int N, int lp, int D>
 void __calcFinalImageMatrix(complex<double> **mem1, complex<double> **mem2, complex<double> **imageMatrix, int machine_index);
 
 template<int N, int lp, int D>
-void parallelDoubleStep( vector<vector<visibility<N>>> parallelVisibilities, vector<complex<double>> W, complex<double> **imageMatrix, int machine_index ){
+void parallelDoubleStep( vector<vector<visibility<N>>> &parallelVisibilities, vector<complex<double>> &W, complex<double> **imageMatrix, int machine_index ){
     cout << " is in parallel " << endl;
 
     //creating memory
@@ -52,11 +52,18 @@ void parallelDoubleStep( vector<vector<visibility<N>>> parallelVisibilities, vec
 
     cout << " done with parallel " << endl;
 
+    //deleting memory
+    for(int i = 0; i < N; ++i){
+        delete mem1[i];
+        delete mem2[i];
+    }
+    delete mem1;
+    delete mem2;
 }
 
 
 template<int N, int lp, int D>
-complex<double>**__createShiftVectors(complex<double> **mem1,vector<vector<visibility<N>>> parallelVisibilities, vector<complex<double>> W){
+complex<double>**__createShiftVectors(complex<double> **mem1,vector<vector<visibility<N>>> &parallelVisibilities, vector<complex<double>> &W){
     int r = N/lp;
 
     //calculating shift-vectors and storing it in memory 1
