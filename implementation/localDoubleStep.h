@@ -4,17 +4,21 @@
 #include <vector>
 #include <iostream>
 #include <mpi.h>
+#include <string>
+#include <fstream>
+#include <cstdio>
+#include <ctime>
 #include "magickNumbers.h"
 #include "perpendicularDoubleStepSteps.h"
+#include "measure.h"
 
 template<int N, int lp, int D>
-void __localDoubleStep(int rank, complex<double> **imageMatrix, vector<complex<double>> &W);
+bool __localDoubleStep(int rank, complex<double> **imageMatrix, vector<complex<double>> &W, vector<vector<perd::line>> &required_lines_for_perpendicular ,double &t);
+
 
 template<int N>
 void local_double_step(int rank){
-
-    std::cout << "local process " << endl;
-
+    double t;
     const int D = mn::N/mn::size;
     //create image matrix
     complex<double> **imageMatrix = new complex<double>*[D];
@@ -25,6 +29,14 @@ void local_double_step(int rank){
         }
     }
 
+    //calculating lines for perpendicular doublestep
+    vector<vector<perd::line>> required_lines_for_perpendicular(log2(N)+1);
+    vector<perd::line> lines;
+    for(int i = D*rank; i < D*rank+D; ++i){
+        lines.push_back(perd::line(i,0));
+    }
+    perd::calc_required_lines<N>(lines, 0, N, required_lines_for_perpendicular);
+
 
     //calculating W
     vector<complex<double>> W (N);
@@ -33,8 +45,9 @@ void local_double_step(int rank){
         W[i] = pow(W_0,i);
     }
 
-    while(true){
-        __localDoubleStep<mn::N, mn::lp, D>(rank, imageMatrix,W);
+    bool ceep_running = true;
+    while(ceep_running){
+        ceep_running = __localDoubleStep<mn::N, mn::lp, D>(rank, imageMatrix,W, required_lines_for_perpendicular, t);
     }
 
     for(int i = 0; i < D; ++i){
@@ -44,15 +57,34 @@ void local_double_step(int rank){
 }
 
 template<int N, int lp, int D>
-void __localDoubleStep(int rank, complex<double> **imageMatrix, vector<complex<double>> &W){
+bool __localDoubleStep(int rank, complex<double> **imageMatrix, vector<complex<double>> &W, vector<vector<perd::line>> &required_lines_for_perpendicular ,double &t){
 
-    int buf[ mn::visibilities_per_message*6 ]; //note here v, u, vis_i, vis_r, isCS, shift_index
-    int res = MPI_Recv( &buf, mn::visibilities_per_message*6, MPI_INT, mn::MPI_host, mn::performDoubleStep, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    //int buf[ mn::visibilities_per_message*6+1 ]; //note here v, u, vis_i, vis_r, isCS, shift_index
+    int *buf = new int[mn::visibilities_per_message*6+1];
 
-    vector<vector<visibility<N>>> parallelVisibilities(N);
-    vector<vector<visibility<N>>> perpendicularVisibilities(N);
 
-    for( int i = 0; i < N; i += 6){
+    int res = MPI_Recv( buf, mn::visibilities_per_message*6+1, MPI_INT, mn::MPI_host, mn::performDoubleStep, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    if (buf[mn::visibilities_per_message*6] == mn::COMMANDS::stop){
+        return false;
+    } else if (buf[mn::visibilities_per_message*6] == mn::COMMANDS::safe_results){
+        __safe_local_result<N,D>(rank, imageMatrix);
+        return true;
+    } else if(buf[mn::visibilities_per_message*6] == mn::COMMANDS::safe_timer){
+        __safe_local_timer(rank, t, "time per run" );
+        return true;
+    } else if(buf[mn::visibilities_per_message*6] == mn::COMMANDS::start_timer){
+        t = omp_get_wtime();
+        return true;
+    }
+
+
+    vector<vector<visibility<N>>> *parallelVisibilities= new vector<vector<visibility<N>>>(N);
+    vector<vector<visibility<N>>> *perpendicularVisibilities = new vector<vector<visibility<N>>>(N);
+
+
+
+    for( int i = 0; i < mn::visibilities_per_message*6; i += 6){
         double vis_r = *(float*)&buf[i+mn::VIS_ENCODING::vis_r];
         double vis_i = *(float*)&buf[i+mn::VIS_ENCODING::vis_i];
         int u = buf[i+mn::VIS_ENCODING::u];
@@ -61,27 +93,20 @@ void __localDoubleStep(int rank, complex<double> **imageMatrix, vector<complex<d
         bool isCS = buf[i+mn::VIS_ENCODING::isCS];
         visibility<N> vis(complex<double>(vis_r, vis_i), u, v, isCS, shift_index);
         if(isCS){
-            perpendicularVisibilities[shift_index].push_back(vis);
+            (*perpendicularVisibilities)[shift_index].push_back(vis);
         } else {
-            parallelVisibilities[shift_index].push_back(vis);
+            (*parallelVisibilities)[shift_index].push_back(vis);
         }
     }
 
-    //print out visibilities
-    for( int j = 0; j < N; ++j){
-    for(int i = 0; i < perpendicularVisibilities[j].size(); ++i){
-        visibility<N> v = perpendicularVisibilities[j][i];
-        std::cout << "per [" << v.vis << ", " << v.u <<  ", "<< v.v << "]";
-    }
-    for(int i = 0; i < parallelVisibilities[j].size(); ++i){
-        visibility<N> v = parallelVisibilities[j][i];
-        std::cout << "par [" << v.vis << ", " << v.u <<  ", "<< v.v << "]" << "shift-index: " << v.shift_index << endl;
-    }
-    }
-
     //perform SPIFT
-    perd::perpendicularDoubleStep<N,lp,D>(perpendicularVisibilities,W,imageMatrix,rank);
-    pard::parallelDoubleStep<N,lp,D>(parallelVisibilities,W,imageMatrix,rank);
+    pard::parallelDoubleStep<N,lp,D>(*parallelVisibilities,W,imageMatrix,rank);
+    perd::perpendicularDoubleStep<N,lp,D>(*perpendicularVisibilities,W,imageMatrix,rank, required_lines_for_perpendicular);
+
+    delete buf;
+
+    return true;
 }
+
 
 #endif

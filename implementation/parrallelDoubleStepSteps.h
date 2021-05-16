@@ -7,6 +7,8 @@
 #include<math.h>
 #include<iostream>
 #include<omp.h>
+#include"measure.h"
+#include"magickNumbers.h"
 
 using namespace std;
 
@@ -23,7 +25,8 @@ void __calcFinalImageMatrix(complex<double> **mem1, complex<double> **mem2, comp
 
 template<int N, int lp, int D>
 void parallelDoubleStep( vector<vector<visibility<N>>> &parallelVisibilities, vector<complex<double>> &W, complex<double> **imageMatrix, int machine_index ){
-    cout << " is in parallel " << endl;
+
+    cout << "starting with perpendicular" << endl;
 
     //creating memory
     complex<double> **mem1 = new complex<double>*[N];
@@ -33,15 +36,22 @@ void parallelDoubleStep( vector<vector<visibility<N>>> &parallelVisibilities, ve
             mem2[i] = new complex<double>[N];
     }
 
+    double t_createShiftVectors = omp_get_wtime();
+
     complex<double>** mem_new = __createShiftVectors<N,lp,D>(mem1,parallelVisibilities,W);
+
+    __safe_local_timer(machine_index,t_createShiftVectors,"create_row_shift_dic");
 
     if(mem2 == mem_new){
         mem2 = mem1;
         mem1 = mem_new;
     }
 
+    double t_calculateImageMatrix = omp_get_wtime();
 
     mem_new = __cacDoubleStepPara<N,lp,D>(mem1, mem2);
+
+    cout << "calculated parallel doublestel" << endl;
 
     if(mem2 == mem_new){
         mem2 = mem1;
@@ -50,7 +60,10 @@ void parallelDoubleStep( vector<vector<visibility<N>>> &parallelVisibilities, ve
 
     __calcFinalImageMatrix<N,lp,D>(mem1,mem2,imageMatrix,machine_index);
 
-    cout << " done with parallel " << endl;
+    __safe_local_timer(machine_index, t_calculateImageMatrix, "calculated_row_doublestep");
+
+    cout << "updated parallel image matrix" << endl;
+
 
     //deleting memory
     for(int i = 0; i < N; ++i){
@@ -67,7 +80,9 @@ complex<double>**__createShiftVectors(complex<double> **mem1,vector<vector<visib
     int r = N/lp;
 
     //calculating shift-vectors and storing it in memory 1
-    #pragma omp parallel for
+    omp_set_dynamic(0);
+    omp_set_num_threads(mn::lp);
+    #pragma omp parallel for shared(parallelVisibilities)
     for( int k = 0; k < lp; ++k){
 
         for( int shift_index = k*r; shift_index < (k+1)*r; ++shift_index){
@@ -102,6 +117,8 @@ complex<double>** __cacDoubleStepPara(complex<double> **mem1, complex<double> **
     //for small j
     for( int j = 1; j <= log2(D) && j <= log2(N/lp); ++j){
 
+        omp_set_dynamic(0);
+        omp_set_num_threads(mn::lp);
         #pragma omp parallel for
         for( int k = 0; k < lp; ++k){
             int D_j = pow(2,j);
@@ -128,6 +145,8 @@ complex<double>** __cacDoubleStepPara(complex<double> **mem1, complex<double> **
     //for large J
     for( int j = log2(N/lp)+1; j <= log2(D); ++j){
         int D_j = pow(2,j);
+        omp_set_dynamic(0);
+        omp_set_num_threads(mn::lp);
         #pragma omp parallel for
         for( int k = 0; k < lp; ++k){
             double r = 1.*k*N/(lp*D_j);
@@ -155,6 +174,9 @@ complex<double>** __cacDoubleStepPara(complex<double> **mem1, complex<double> **
 
 template<int N, int lp, int D>
 void __calcFinalImageMatrix(complex<double> **mem1, complex<double> **mem2, complex<double> **imageMatrix, int machine_index){
+
+    omp_set_dynamic(0);
+    omp_set_num_threads(mn::lp);
     #pragma omp parallel for
     for(int k = 0; k < lp; ++k){
         int r = N/lp;
